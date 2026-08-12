@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/*
+  GroupWork design tokens
+  ------------------------------------------------------------------
+  Direction: an academic/campus feel — a term planner, not a startup
+  dashboard. Warm paper background, deep ink text, a brass/ochre accent
+  (deliberately not blue-600 or terracotta), desaturated status colors
+  that read as a coordinated set, and a serif display face paired with
+  a civic sans body face + mono for codes.
+*/
+@theme {
+  /* --- Color: base --- */
+  --color-ink: #241f19;         /* near-black, warm brown-black — headings, primary text */
+  --color-ink-soft: #4a4238;    /* secondary text */
+  --color-muted: #8a8071;       /* tertiary/meta text */
+  --color-paper: #f7f4ec;       /* app background — warm parchment, not slate */
+  --color-surface: #fffdf8;     /* card surface — warm off-white, not pure #fff */
+  --color-border: #e4ddcc;      /* hairline borders */
+  --color-border-strong: #d3c9b3;
+
+  /* --- Color: accent (brand) --- */
+  --color-accent: #9c6b2e;      /* brass/ochre — primary actions */
+  --color-accent-dark: #7d5423;
+  --color-accent-soft: #f1e4cd; /* accent tint for badges/hovers */
+
+  /* --- Color: status set (desaturated, coordinated) --- */
+  --color-status-todo: #8a8071;
+  --color-status-todo-bg: #efeae0;
+  --color-status-progress: #4c6b8a;
+  --color-status-progress-bg: #e4ebf1;
+  --color-status-done: #4b7357;
+  --color-status-done-bg: #e5eee7;
+  --color-status-overdue: #a6493f;
+  --color-status-overdue-bg: #f3e3e0;
+
+  /* --- Type --- */
+  --font-display: "Fraunces", "Iowan Old Style", serif;
+  --font-body: "Public Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* --- Radius --- */
+  --radius-card: 0.5rem;     /* structural elements: calmer, less rounded */
+  --radius-control: 0.625rem; /* buttons/inputs */
+  --radius-pill: 999px;       /* badges/chips */
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+}
+
+.font-code {
+  font-family: var(--font-mono);
+}
