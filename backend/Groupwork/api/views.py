@@ -7,9 +7,13 @@ from django.utils import timezone
 from django.db.models import Q
 
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView
+
+from .pagination import paginate_response
 
 from users.models import User
 from classes.models import Class
@@ -116,14 +120,34 @@ def get_visible_offerings(user):
 
 # ─── AUTH / USERS ─────────────────────────────────────────────────────────────
 
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    """
+    Same as simplejwt's TokenObtainPairView, but rate-limited.
+
+    Login is the single most expensive request in the app per-call
+    (password hashing is deliberately slow), and it's the natural target
+    for both brute-force attempts and accidental retry-loop bugs in the
+    frontend. Scoped separately from the general anon/user throttle rates
+    so this stays tight even if those are loosened later.
+    """
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
 def register_user(request):
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data, status=201)
     return Response(serializer.errors, status=400)
+
+
+# ScopedRateThrottle reads `throttle_scope` off the view, and looks up the
+# matching rate in DEFAULT_THROTTLE_RATES (see settings.py: 'auth': '5/min').
+# Must be set on the wrapped function after @api_view builds the view class.
+register_user.throttle_scope = 'auth'
 
 
 @api_view(['GET'])
@@ -138,8 +162,7 @@ def me(request):
 @permission_classes([IsAuthenticated])
 def user_list(request):
     users = User.objects.all()
-    serializer = UserMiniSerializer(users, many=True)
-    return Response(serializer.data)
+    return paginate_response(request, users, UserMiniSerializer)
 
 
 @api_view(['GET', 'PUT', 'PATCH', 'DELETE'])
@@ -335,7 +358,7 @@ def all_groups(request):
         groups = Group.objects.filter(class_field_id__in=active_class_ids)
 
     groups = groups.prefetch_related('members', 'leader')
-    return Response(GroupSerializer(groups, many=True).data)
+    return paginate_response(request, groups, GroupSerializer)
 
 
 @api_view(['DELETE'])
@@ -749,7 +772,7 @@ def assignments_view(request):
                 qs = Assignment.objects.filter(unit__in=offering_units)
             else:
                 qs = Assignment.objects.none()
-        return Response(AssignmentSerializer(qs.select_related('unit', 'created_by'), many=True).data)
+        return paginate_response(request, qs.select_related('unit', 'created_by'), AssignmentSerializer)
 
     if request.method == 'POST':
         if request.user.role not in ['lecturer', 'rep']:
@@ -904,7 +927,7 @@ def submissions(request):
         # context is required so FileField serializes to an absolute URL
         # (otherwise the frontend gets a bare /media/... path it can't
         # reliably turn into a working download link)
-        return Response(SubmissionSerializer(qs, many=True, context={'request': request}).data)
+        return paginate_response(request, qs, SubmissionSerializer, context={'request': request})
 
     if request.method == 'POST':
         if request.user.role != 'leader':
@@ -939,8 +962,8 @@ def submissions(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def my_notifications(request):
-    notifications = Notification.objects.filter(recipient=request.user)
-    return Response(NotificationSerializer(notifications, many=True).data)
+    notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')
+    return paginate_response(request, notifications, NotificationSerializer)
 
 
 @api_view(['PATCH'])

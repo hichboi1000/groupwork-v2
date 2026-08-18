@@ -5,3 +5,5 @@ django-cors-headers
 pillow
 channels
 daphne
+psycopg[binary]
+python-dotenv

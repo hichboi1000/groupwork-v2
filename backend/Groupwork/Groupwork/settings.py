@@ -1,7 +1,14 @@
+import os
 from datetime import timedelta
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Loads backend/Groupwork/.env if present (see .env.example). Safe to call
+# even if the file doesn't exist — os.environ just stays as-is and every
+# os.environ.get(...) below falls back to its SQLite/dev default.
+load_dotenv(BASE_DIR / '.env')
 
 SECRET_KEY = 'django-insecure--$yvtmryuio+pbb&8zb&ywjkek)yv=$%d!7su(zw6!$xo&h0az'
 DEBUG = True
@@ -79,12 +86,34 @@ CHANNEL_LAYERS = {
     }
 }
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# SQLite only allows one writer at a time — fine for a single developer
+# poking at the app, but it starts rejecting writes with "database is
+# locked" under real concurrent traffic (multiple students submitting/
+# updating tasks at once). Postgres is used whenever DB_ENGINE=postgres is
+# set (e.g. in production); SQLite remains the zero-setup default for a
+# single dev running things locally.
+if os.environ.get('DB_ENGINE') == 'postgres':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'groupwork'),
+            'USER': os.environ.get('DB_USER', 'groupwork'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+            # Reuse connections across requests instead of opening a new
+            # one every time — matters once you're running multiple
+            # gunicorn/daphne worker processes under real load.
+            'CONN_MAX_AGE': 60,
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -112,6 +141,20 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # General-purpose limits so a runaway frontend loop or a scripted
+    # attacker can't tie up the (limited, see notes on ASGI concurrency)
+    # request-handling capacity for everyone else. Login/register have
+    # their own much stricter limits below since password hashing makes
+    # them the most expensive requests in the app per-call.
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/min',
+        'user': '120/min',
+        'auth': '5/min',
+    },
 }
 
 SIMPLE_JWT = {

@@ -16,8 +16,31 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Endpoints whose lists now come back paginated from the backend
+// ({count, next, previous, results}) instead of a bare array, because
+// their result sets grow with overall app usage over time (notifications
+// across a whole degree, all assignments/submissions/users, etc). Every
+// component that calls these already does res.data.map(...) / .length
+// expecting a plain array, so this interceptor unwraps `results` back
+// into response.data transparently — no component code has to change.
+// The original pagination info is preserved on response.data.pagination
+// in case a component wants a "load more" / total-count UI later.
+const PAGINATED_PATHS = ['/notifications', '/assignments', '/submissions', '/users', '/groups/all'];
+
+function isPaginatedShape(data) {
+  return data && typeof data === 'object' && Array.isArray(data.results) && 'count' in data;
+}
+
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const isPaginatedEndpoint = PAGINATED_PATHS.some((p) => response.config.url?.startsWith(p));
+    if (isPaginatedEndpoint && isPaginatedShape(response.data)) {
+      const { results, ...pagination } = response.data;
+      response.data = results;
+      response.data.pagination = pagination; // opt-in: { count, next, previous }
+    }
+    return response;
+  },
   async (error) => {
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {
