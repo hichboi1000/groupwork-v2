@@ -23,6 +23,7 @@ htmlcov/
 # Django
 db.sqlite3
 *.sqlite3
+*.dump
 media/
 staticfiles/
 local_settings.py
