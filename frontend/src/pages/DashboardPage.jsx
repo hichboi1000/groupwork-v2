@@ -10,8 +10,7 @@ import WelcomeBanner from "../components/dashboard/WelcomeBanner";
 import QuickActions from "../components/dashboard/QuickActions";
 import StudentHero from "../components/dashboard/StudentHero";
 import LeaderHero from "../components/dashboard/LeaderHero";
-import StaffHero from "../components/dashboard/StaffHero";
-import StatCard from "../components/ui/StatCard";
+import StaffHero from "../components/dashboard/StaffHero";import StatCard from "../components/ui/StatCard";
 import Loading from "../components/ui/Loading";
 import Alert from "../components/ui/Alert";
 import EmptyState from "../components/ui/EmptyState";
@@ -72,6 +71,24 @@ export default function DashboardPage() {
       {role === "student" && <StudentHero stats={stats} />}
       {role === "leader" && <LeaderHero stats={stats} />}
       {isStaff && <StaffHero stats={stats} />}
+
+      {/* PERSONAL WORK — separate from the management view above. A leader
+          or rep is still a participant in a group's actual coursework, not
+          just its manager, and previously had nowhere on the dashboard that
+          showed just "what's on ME" the way a student's dashboard does.
+          Reuses StudentHero (same question, same UI) pointed at their own
+          group's task data instead of a whole-group/class view. */}
+      {(role === "leader" || role === "rep") && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-muted uppercase tracking-[0.12em] mb-3">
+            Your Personal Work
+          </h2>
+          <StudentHero
+            stats={{ group_name: stats.group_name, group_code: stats.group_code, next_task: stats.my_next_task }}
+            tasksPath="/tasks?scope=mine"
+          />
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <p className="text-muted capitalize">

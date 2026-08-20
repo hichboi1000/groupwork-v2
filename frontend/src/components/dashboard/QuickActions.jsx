@@ -50,6 +50,12 @@ export default function QuickActions({ role }) {
         path: "/groups",
       },
       {
+        title: "My Tasks",
+        icon: ClipboardDocumentListIcon,
+        color: "bg-accent",
+        path: "/tasks?scope=mine",
+      },
+      {
         title: "Create Task",
         icon: PlusCircleIcon,
         color: "bg-accent",
@@ -75,6 +81,18 @@ export default function QuickActions({ role }) {
         icon: BuildingLibraryIcon,
         color: "bg-accent",
         path: "/classes",
+      },
+      {
+        title: "My Group",
+        icon: UserGroupIcon,
+        color: "bg-status-done-bg0",
+        path: "/groups",
+      },
+      {
+        title: "My Tasks",
+        icon: ClipboardDocumentListIcon,
+        color: "bg-accent",
+        path: "/tasks?scope=mine",
       },
       {
         title: "Assignments",

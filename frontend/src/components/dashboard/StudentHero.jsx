@@ -16,8 +16,14 @@ function formatDue(dateStr) {
 /**
  * Student's #1 question: "what do I need to do next?" — this answers
  * it in one glance instead of a generic stats grid.
+ *
+ * Reused as-is for the leader/rep "My Tasks" personal section on the
+ * dashboard (see DashboardPage) — same shape of question, same UI.
+ * `tasksPath` lets those callers point "Open my tasks" at
+ * /tasks?scope=mine instead of the default /tasks (which for a leader/
+ * rep means the whole group/class management list, not their own task).
  */
-export default function StudentHero({ stats }) {
+export default function StudentHero({ stats, tasksPath = "/tasks" }) {
   const navigate = useNavigate();
   const { next_task, group_name, group_code } = stats;
 
@@ -45,7 +51,7 @@ export default function StudentHero({ stats }) {
               <Badge variant={next_task.is_overdue ? "overdue" : "progress"}>{formatDue(next_task.due_date)}</Badge>
             </div>
           </div>
-          <Button onClick={() => navigate("/tasks")}>Open my tasks</Button>
+          <Button onClick={() => navigate(tasksPath)}>Open my tasks</Button>
         </div>
       ) : (
         <div className="flex items-center justify-between flex-wrap gap-4">

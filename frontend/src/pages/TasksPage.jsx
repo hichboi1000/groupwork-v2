@@ -193,6 +193,7 @@ function TaskModal({ task, group, assignments, onClose, onSave }) {
 export default function TasksPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isMineScope = searchParams.get("scope") === "mine";
 
   const [tasks, setTasks] = useState([]);
   const [group, setGroup] = useState(null);
@@ -204,8 +205,9 @@ export default function TasksPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const scope = searchParams.get("scope") === "mine" ? { scope: "mine" } : undefined;
     Promise.all([
-      getTasks(),
+      getTasks(scope),
       getMyGroup().catch(() => ({ data: null })),
       getAssignments().catch(() => ({ data: [] })),
     ]).then(([t, g, a]) => {
@@ -213,7 +215,7 @@ export default function TasksPage() {
       if (searchParams.get("new") && user.role === "leader" && g.data) {
         setModal("create");
       }
-      if (searchParams.get("new")) setSearchParams({}, { replace: true });
+      if (searchParams.get("new")) setSearchParams({ ...(scope || {}) }, { replace: true });
     }).finally(() => setLoading(false));
   }, []);
 
@@ -264,7 +266,9 @@ export default function TasksPage() {
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Tasks</h1>
+          <h1 className="text-2xl font-bold text-ink">
+            {isMineScope ? "My Tasks" : "Tasks"}
+          </h1>
           <p className="text-muted mt-1">
             {counts.done} of {counts.all} done
             {counts.overdue > 0 && <span className="text-status-overdue ml-2">· {counts.overdue} overdue</span>}
@@ -294,7 +298,13 @@ export default function TasksPage() {
           <AnimatePresence>
             {filtered.map((task) => {
               const isOwn = task.assigned_to === user.id;
-              const canUpdateStatus = user.role === "student" && isOwn;
+              // Anyone can update the status/evidence of a task assigned
+              // to THEM personally — this used to be locked to
+              // role === "student", which meant a leader or rep assigned
+              // a task in their own group had no way to mark it done.
+              // Backend enforces the same rule (task_detail), this just
+              // matches the UI to what's actually allowed.
+              const canUpdateStatus = isOwn;
               const edgeColor = task.is_overdue && task.status !== "done" ? "bg-status-overdue"
                 : task.status === "done" ? "bg-status-done"
                 : task.status === "progress" ? "bg-status-progress" : "bg-border-strong";

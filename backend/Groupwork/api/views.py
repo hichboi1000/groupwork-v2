@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 from django.http import FileResponse, Http404
 from django.utils import timezone
 from django.db.models import Q
+from django.db import transaction
 
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes, parser_classes, throttle_classes
@@ -26,6 +27,8 @@ from notifications.utils import (
     notify_task_status_updated,
     notify_member_joined,
     notify_group_assignment_linked,
+    notify_leadership_transferred,
+    notify_rep_added,
 )
 
 from .serializers import (
@@ -74,6 +77,16 @@ def get_user_classes(user):
     if user.role != 'rep':
         return Class.objects.none()
     return Class.objects.filter(reps=user)
+
+
+def get_class_students(cls):
+    """
+    Everyone currently reachable as a 'classmate' of this class — i.e.
+    a member of some group whose class_field is this class. This is the
+    eligible pool for rep handover: you can only promote someone who is
+    actually part of the class, not an arbitrary user id.
+    """
+    return User.objects.filter(joined_groups__class_field=cls).distinct()
 
 
 def get_lecturer_units(user):
@@ -262,14 +275,75 @@ def class_detail(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def add_rep_to_class(request, pk):
-    """Supports rep handovers — multiple reps per class. See DESIGN_DECISIONS.md section 3."""
+    """
+    Rep handover. Historically this only accepted a user who ALREADY held
+    role='rep' — meaning an outgoing rep could only hand off to another
+    pre-existing rep account, never promote an ordinary classmate. That
+    made the realistic handover case ("the current rep is graduating,
+    make Jane the new rep") impossible without Jane creating a fresh
+    account. Now: any student who is actually part of this class (a
+    member of one of its groups) can be promoted directly.
+    """
     cls = get_object_or_404(Class, pk=pk)
     if not cls.reps.filter(id=request.user.id).exists():
         return Response({'error': 'You do not manage this class'}, status=403)
 
     new_rep_id = request.data.get('user_id')
-    new_rep = get_object_or_404(User, id=new_rep_id, role='rep')
+    new_rep = get_object_or_404(User, id=new_rep_id)
+
+    if new_rep.role not in ('student', 'rep'):
+        return Response(
+            {'error': 'Only a student in this class can be made a rep'}, status=400)
+
+    if new_rep.role == 'student' and not get_class_students(cls).filter(id=new_rep.id).exists():
+        return Response(
+            {'error': f'{new_rep.username} is not a member of any group in this class'},
+            status=400)
+
+    was_already_rep = cls.reps.filter(id=new_rep.id).exists()
     cls.reps.add(new_rep)
+    if new_rep.role == 'student':
+        new_rep.role = 'rep'
+        new_rep.save(update_fields=['role'])
+
+    if not was_already_rep:
+        notify_rep_added(cls, new_rep, added_by=request.user)
+
+    return Response(ClassSerializer(cls).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def remove_rep_from_class(request, pk):
+    """
+    The other half of a handover: once the new rep is in place, the
+    outgoing rep steps down. Refuses to remove the last rep on a class —
+    a class with zero reps has nobody able to attach/detach units or
+    manage membership, which is an unrecoverable dead end without going
+    back into Django Admin.
+    """
+    cls = get_object_or_404(Class, pk=pk)
+    if not cls.reps.filter(id=request.user.id).exists():
+        return Response({'error': 'You do not manage this class'}, status=403)
+
+    target_id = request.data.get('user_id', request.user.id)
+    target = get_object_or_404(User, id=target_id)
+
+    if not cls.reps.filter(id=target.id).exists():
+        return Response({'error': f'{target.username} is not a rep of this class'}, status=400)
+
+    if cls.reps.count() <= 1:
+        return Response(
+            {'error': 'Cannot remove the last rep — add another rep first'}, status=400)
+
+    cls.reps.remove(target)
+
+    # Only demote back to plain 'student' if they're not still repping
+    # some OTHER class — a user can legitimately manage several classes.
+    if target.role == 'rep' and not target.managed_classes.exists():
+        target.role = 'student'
+        target.save(update_fields=['role'])
+
     return Response(ClassSerializer(cls).data)
 
 
@@ -277,7 +351,17 @@ def add_rep_to_class(request, pk):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsLeader])
+@transaction.atomic
 def create_group(request):
+    # Locks this user's row for the rest of the transaction so a second,
+    # near-simultaneous request from the same user (double-click, retry
+    # after a slow response, two tabs) has to wait for this one to
+    # commit before it can even run its own membership check — closing
+    # the check-then-act race that a plain .exists() check leaves open.
+    # (No-op under SQLite, which serializes writes at the file level
+    # instead — this matters once you're on Postgres, see README.)
+    User.objects.select_for_update().get(pk=request.user.pk)
+
     if Group.objects.filter(members=request.user).exists():
         return Response({'error': 'You already belong to a group'}, status=400)
 
@@ -306,6 +390,7 @@ def create_group(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def join_group(request):
     serializer = JoinGroupSerializer(data=request.data)
     if not serializer.is_valid():
@@ -313,6 +398,13 @@ def join_group(request):
 
     code = serializer.validated_data['code']
     group = get_object_or_404(Group, code=code)
+
+    # See create_group for why this lock is here — same race, same fix:
+    # two concurrent join_group calls (join two different groups from two
+    # tabs, or double-click one) can both pass the .exists() check before
+    # either has committed its members.add(). Locking the user row
+    # serializes them.
+    User.objects.select_for_update().get(pk=request.user.pk)
 
     if Group.objects.filter(members=request.user).exists():
         return Response({'error': 'You already belong to a group'}, status=400)
@@ -368,12 +460,74 @@ def leave_group(request):
     if not group:
         return Response({'error': 'You are not in a group'}, status=404)
     if group.leader == request.user:
-        return Response({'error': 'Leaders cannot leave — delete the group instead'}, status=400)
+        return Response(
+            {'error': 'Transfer leadership to another member first (see '
+                      '/groups/transfer-leader/), then you can leave.'},
+            status=400)
     group.members.remove(request.user)
     return Response({'message': f'You left {group.name}'})
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def transfer_leadership(request):
+    """
+    Hands group leadership to another existing member — no new account,
+    no re-onboarding, no losing the group's code/history/tasks. This is
+    the fix for the gap the old flow had: previously the ONLY way to
+    change who leads a group was for the new leader to already hold
+    role='leader' and create a brand new group from scratch.
+
+    Locks the group row so a leader can't accidentally fire two transfers
+    at once (e.g. double-click) and land in an inconsistent state.
+    """
+    group = get_user_group(request.user)
+    if not group:
+        return Response({'error': 'You are not in a group'}, status=404)
+
+    group = Group.objects.select_for_update().get(pk=group.pk)
+
+    if group.leader_id != request.user.id:
+        return Response({'error': 'Only the current leader can transfer leadership'}, status=403)
+
+    new_leader_id = request.data.get('new_leader_id')
+    if not new_leader_id:
+        return Response({'error': 'new_leader_id is required'}, status=400)
+
+    if str(new_leader_id) == str(request.user.id):
+        return Response({'error': 'You are already the leader'}, status=400)
+
+    new_leader = get_object_or_404(User, id=new_leader_id)
+
+    if not group.members.filter(id=new_leader.id).exists():
+        return Response(
+            {'error': f'{new_leader.username} is not a member of this group'}, status=400)
+
+    if new_leader.role != 'student':
+        return Response(
+            {'error': f'{new_leader.username} already holds another role ({new_leader.role}) '
+                      'and cannot be made a group leader'},
+            status=400)
+
+    old_leader = request.user
+
+    group.leader = new_leader
+    group.save(update_fields=['leader'])
+
+    new_leader.role = 'leader'
+    new_leader.save(update_fields=['role'])
+
+    old_leader.role = 'student'
+    old_leader.save(update_fields=['role'])
+
+    notify_leadership_transferred(group, old_leader, new_leader)
+
+    return Response(GroupSerializer(group).data)
+
+
 # ─── UNITS ────────────────────────────────────────────────────────────────────
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -642,7 +796,17 @@ def group_file_detail(request, pk):
 def tasks(request):
     if request.method == 'GET':
         user = request.user
-        if user.role == 'lecturer':
+
+        # ?scope=mine switches ANY role over to "just what's assigned to
+        # me personally" — the same filter students always got by default,
+        # now explicitly reachable for leaders/reps/lecturers too, who
+        # otherwise only ever see the full management-scoped list below.
+        # This is what backs each role's personal "My Tasks" dashboard
+        # section/link — it doesn't change the default (unscoped) behavior
+        # for anyone.
+        if request.query_params.get('scope') == 'mine':
+            task_qs = Task.objects.filter(assigned_to=user)
+        elif user.role == 'lecturer':
             visible_units = get_lecturer_units(user)
             active_class_ids = UnitOffering.objects.filter(
                 unit__in=visible_units, status='active'
@@ -697,17 +861,24 @@ def tasks(request):
 def task_detail(request, pk):
     task = get_object_or_404(Task, pk=pk)
     user = request.user
+    is_own_task = task.assigned_to_id == user.id
 
     if user.role == 'student' and task.assigned_to != user:
         return Response({'error': 'You can only access your own tasks'}, status=403)
 
-    if user.role == 'leader' and task.group.leader != user:
+    if user.role == 'leader' and task.group.leader != user and not is_own_task:
         return Response({'error': 'You can only access tasks in your group'}, status=403)
 
-    if user.role == 'rep' and not get_user_classes(user).filter(id=task.group.class_field_id).exists():
+    # A rep can be a plain member of a group under a class they DON'T
+    # manage (e.g. joined a friend's group in a different unit) — their
+    # own task there should still be reachable, same as any other member's
+    # would be. The "classes you manage" restriction is about oversight of
+    # OTHER people's tasks, not a gate on a rep's own personal work.
+    if user.role == 'rep' and not is_own_task \
+            and not get_user_classes(user).filter(id=task.group.class_field_id).exists():
         return Response({'error': 'You can only access tasks in classes you manage'}, status=403)
 
-    if user.role == 'lecturer':
+    if user.role == 'lecturer' and not is_own_task:
         unit_id = task.assignment.unit_id if task.assignment else None
         if not unit_id or not get_lecturer_units(user).filter(id=unit_id).exists():
             return Response({'error': 'You can only access tasks for units you teach'}, status=403)
@@ -716,8 +887,16 @@ def task_detail(request, pk):
         return Response(TaskSerializer(task, context={'request': request}).data)
 
     if request.method == 'PATCH':
-        # Students may only change status and attach evidence
-        if user.role == 'student':
+        is_group_leader = task.group.leader_id == user.id
+
+        # Working your own task — whatever your account role — only ever
+        # lets you touch status and evidence, never retitle/reassign/
+        # reschedule it. Full field access below is for the group's
+        # LEADER managing the task (including their own, which is why
+        # is_group_leader takes priority over is_own_task here), not for
+        # rep/lecturer oversight of tasks that aren't theirs — that stays
+        # exactly as it already was.
+        if user.role == 'student' or (is_own_task and not is_group_leader):
             allowed = {'status', 'submission_text', 'submission_file'}
             data = {k: v for k, v in request.data.items() if k in allowed}
         else:
@@ -984,6 +1163,29 @@ def mark_all_notifications_read(request):
 
 # ─── STATS / SUMMARY ──────────────────────────────────────────────────────────
 
+def get_personal_task_summary(user, group):
+    """
+    Personal, assigned-to-me task stats within a specific group — used to
+    give leaders and reps their own 'My Tasks' section, separate from the
+    group/class-wide management numbers they also see. Returns None if
+    there's no group to scope to (e.g. a rep who hasn't joined one yet).
+    """
+    if not group:
+        return None
+    qs = Task.objects.filter(group=group, assigned_to=user)
+    next_task = qs.exclude(status='done').order_by('due_date').first()
+    return {
+        'my_tasks_total': qs.count(),
+        'my_tasks_todo': qs.filter(status='todo').count(),
+        'my_tasks_in_progress': qs.filter(status='progress').count(),
+        'my_tasks_done': qs.filter(status='done').count(),
+        'my_next_task': {
+            'id': next_task.id, 'title': next_task.title,
+            'due_date': next_task.due_date, 'is_overdue': next_task.is_overdue,
+        } if next_task else None,
+    }
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
@@ -1007,7 +1209,7 @@ def dashboard_stats(request):
             offering__in=active_offerings, status='submitted'
         ).select_related('group', 'assignment')
 
-        return Response({
+        payload = {
             'role': user.role,
             'units_count': visible_units.count(),
             'units': list(visible_units.values_list('code', flat=True)),
@@ -1025,14 +1227,30 @@ def dashboard_stats(request):
             'unread_notifications': Notification.objects.filter(
                 recipient=user, is_read=False
             ).count(),
-        })
+        }
+
+        # A rep is still often a student in some group of their own — this
+        # gives them the same personal 'my tasks' visibility a leader gets,
+        # separate from the class-management numbers above. Lecturers are
+        # never group members, so this section is rep-only.
+        if user.role == 'rep':
+            rep_group = get_user_group(user)
+            payload['group_name'] = rep_group.name if rep_group else None
+            payload['group_code'] = rep_group.code if rep_group else None
+            personal = get_personal_task_summary(user, rep_group)
+            payload.update(personal or {
+                'my_tasks_total': 0, 'my_tasks_todo': 0,
+                'my_tasks_in_progress': 0, 'my_tasks_done': 0, 'my_next_task': None,
+            })
+
+        return Response(payload)
 
     group = get_user_group(user)
 
     if user.role == 'leader' and group:
         tasks_qs = Task.objects.filter(group=group)
         ready_to_submit = GroupAssignment.objects.filter(group=group, status='ready_to_submit')
-        return Response({
+        payload = {
             'role': user.role,
             'group_name': group.name,
             'group_code': group.code,
@@ -1049,7 +1267,14 @@ def dashboard_stats(request):
             'unread_notifications': Notification.objects.filter(
                 recipient=user, is_read=False
             ).count(),
-        })
+        }
+        # 'tasks_*' above is the whole GROUP's task load (the management
+        # view). 'my_tasks_*' is just the tasks assigned to the leader
+        # personally — a leader is also a participant in their own group's
+        # work, not just its manager, and previously had no way to see
+        # "what's on ME" separate from "what's on everyone".
+        payload.update(get_personal_task_summary(user, group))
+        return Response(payload)
 
     # Student
     my_tasks = Task.objects.filter(assigned_to=user)

@@ -36,6 +36,7 @@ const MENU_BY_ROLE = {
   ],
   rep: [
     { name: "Dashboard", path: "/", icon: HomeIcon },
+    { name: "My Group", path: "/groups", icon: UserGroupIcon },
     { name: "Classes", path: "/classes", icon: BuildingLibraryIcon },
     { name: "Units", path: "/units", icon: BookOpenIcon },
     { name: "Assignments", path: "/assignments", icon: ClipboardDocumentListIcon },
