@@ -13,6 +13,8 @@ class Notification(models.Model):
         ('submission_made', 'Submission Made'),
         ('group_assigned', 'Assignment Linked to Group'),
         ('ready_to_submit', 'All Tasks Done — Ready to Submit'),
+        ('leadership_transferred', 'Leadership Transferred'),
+        ('rep_added', 'Added as Class Representative'),
     ]
 
     recipient = models.ForeignKey(

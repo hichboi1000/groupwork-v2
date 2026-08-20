@@ -76,3 +76,41 @@ def notify_group_assignment_linked(group_assignment):
             message=f'Your group "{group.name}" has been assigned "{assignment.title}". Deadline: {assignment.deadline.strftime("%d %b %Y")}.',
             group=group,
         )
+
+
+def notify_leadership_transferred(group, old_leader, new_leader):
+    """Notify both users when group leadership is transferred."""
+
+    old_name = old_leader.get_full_name() or old_leader.username
+    new_name = new_leader.get_full_name() or new_leader.username
+
+    # Notify the new leader
+    Notification.objects.create(
+        recipient=new_leader,
+        notification_type='leadership_transferred',
+        title='You are now the group leader',
+        message=f'{old_name} transferred leadership of "{group.name}" to you.',
+        group=group,
+    )
+
+    # Notify the previous leader
+    Notification.objects.create(
+        recipient=old_leader,
+        notification_type='leadership_transferred',
+        title='Leadership transferred',
+        message=f'You transferred leadership of "{group.name}" to {new_name}.',
+        group=group,
+    ) 
+
+
+def notify_rep_added(cls, new_rep, added_by):
+    """Notify a user when they are added as a class representative."""
+
+    added_by_name = added_by.get_full_name() or added_by.username
+
+    Notification.objects.create(
+        recipient=new_rep,
+        notification_type='rep_added',
+        title='You are now a class representative',
+        message=f'{added_by_name} added you as a representative for {cls.name}.',
+    )
