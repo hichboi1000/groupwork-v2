@@ -12,6 +12,7 @@ urlpatterns = [
     path('classes/', views.classes_view, name='classes'),
     path('classes/<int:pk>/', views.class_detail, name='class-detail'),
     path('classes/<int:pk>/add-rep/', views.add_rep_to_class, name='add-rep-to-class'),
+    path('classes/<int:pk>/remove-rep/', views.remove_rep_from_class, name='remove-rep-from-class'),
 
     # Groups
     path('groups/create/', views.create_group, name='create-group'),
@@ -19,6 +20,7 @@ urlpatterns = [
     path('groups/mine/', views.my_group, name='my-group'),
     path('groups/all/', views.all_groups, name='all-groups'),
     path('groups/leave/', views.leave_group, name='leave-group'),
+    path('groups/transfer-leader/', views.transfer_leadership, name='transfer-leadership'),
     path('groups/progress/', views.group_progress, name='group-progress'),
     path('groups/files/', views.group_files, name='group-files'),
     path('groups/files/<int:pk>/', views.group_file_detail, name='group-file-detail'),

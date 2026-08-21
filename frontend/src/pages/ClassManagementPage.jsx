@@ -6,6 +6,7 @@ import {
   getClasses, createClass, getAllGroups,
   getUnitOfferings, getUnitOfferingsHistory,
   attachClassToUnit, detachClass,
+  addRepToClass, removeRepFromClass,
 } from "../api/client";
 
 import Button from "../components/ui/Button";
@@ -18,7 +19,6 @@ import Loading from "../components/ui/Loading";
 import Tabs from "../components/ui/Tabs";
 import Modal, { ModalActions } from "../components/ui/Modal";
 import CodeChip from "../components/ui/CodeChip";
-import { ClipboardDocumentIcon, CheckIcon } from "@heroicons/react/24/outline";
 
 const STAGES = [
   ["1.1", "Year 1, Sem 1"], ["1.2", "Year 1, Sem 2"],
@@ -106,6 +106,47 @@ export default function ClassManagementPage() {
     }
   };
 
+  // Rep handover — promote a classmate or step down, without recreating
+  // the class. `repBusyId` disables both controls on a class card mid-request
+  // instead of a separate flag per action, since only one can run at a time.
+  const [promoteChoice, setPromoteChoice] = useState({}); // { [classId]: userId }
+  const [repBusyId, setRepBusyId] = useState(null);
+
+  const handleRepChange = async (cls, action, userId) => {
+    setError(""); setSuccess("");
+    setRepBusyId(cls.id);
+    try {
+      const r = await action(cls.id, userId);
+      setClasses((cs) => cs.map((c) => (c.id === cls.id ? r.data : c)));
+      return true;
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not update reps.");
+      return false;
+    } finally {
+      setRepBusyId(null);
+    }
+  };
+
+  const handlePromoteRep = async (cls) => {
+    const userId = promoteChoice[cls.id];
+    if (!userId) return;
+    if (await handleRepChange(cls, addRepToClass, userId)) {
+      setSuccess("New rep added — they can now co-manage this class.");
+      setPromoteChoice((p) => ({ ...p, [cls.id]: "" }));
+    }
+  };
+
+  const handleStepDownRep = async (cls, repUser) => {
+    const isSelf = repUser.id === user.id;
+    if (!window.confirm(
+      isSelf ? "Step down as rep of this class? You'll lose management access unless someone re-adds you."
+             : `Remove ${repUser.full_name} as a rep of this class?`
+    )) return;
+    if (await handleRepChange(cls, removeRepFromClass, repUser.id)) {
+      setSuccess(isSelf ? "You stepped down as rep." : `${repUser.full_name} is no longer a rep.`);
+    }
+  };
+
   if (user.role !== "rep") {
     return <EmptyState icon="🚫" message="Class management is only available to class representatives." />;
   }
@@ -176,6 +217,55 @@ export default function ClassManagementPage() {
                       </div>
                     </div>
                   )}
+
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <div className="text-sm text-muted mb-2">Class reps</div>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {cls.reps?.map((r) => (
+                        <Badge key={r.id} variant="todo" className="flex items-center gap-2">
+                          {r.full_name}
+                          <button
+                            type="button"
+                            onClick={() => handleStepDownRep(cls, r)}
+                            disabled={repBusyId === cls.id}
+                            className="text-muted hover:text-status-overdue text-xs"
+                            title={r.id === user.id ? "Step down" : "Remove rep"}
+                          >
+                            ✕
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                    {(() => {
+                      const repIds = new Set((cls.reps || []).map((r) => r.id));
+                      const candidates = [...new Map(
+                        classGroups.flatMap((g) => g.members || [])
+                          .filter((m) => !repIds.has(m.id))
+                          .map((m) => [m.id, m])
+                      ).values()];
+                      if (!candidates.length) return null;
+                      return (
+                        <div className="flex gap-2">
+                          <Select
+                            value={promoteChoice[cls.id] || ""}
+                            onChange={(e) => setPromoteChoice((p) => ({ ...p, [cls.id]: e.target.value }))}
+                            className="flex-1"
+                          >
+                            <option value="">— Promote a classmate to rep —</option>
+                            {candidates.map((m) => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                          </Select>
+                          <Button
+                            size="sm" variant="outline"
+                            loading={repBusyId === cls.id}
+                            disabled={!promoteChoice[cls.id]}
+                            onClick={() => handlePromoteRep(cls)}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </motion.div>
               );
             })}

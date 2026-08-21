@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ClipboardDocumentIcon, CheckIcon } from "@heroicons/react/24/outline";
+import { ClipboardDocumentIcon, CheckIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { copyToClipboard } from "../../utils/clipboard";
 
 /**
  * The app's signature visual element.
@@ -12,17 +13,13 @@ import { ClipboardDocumentIcon, CheckIcon } from "@heroicons/react/24/outline";
  * physical object worth copying and sharing, not a database field.
  */
 export default function CodeChip({ code, label, size = "md", copyable = true }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState("idle"); // idle | copied | failed
 
   const handleCopy = async () => {
     if (!copyable) return;
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard API unavailable — silently ignore, chip still displays the code
-    }
+    const ok = await copyToClipboard(code);
+    setState(ok ? "copied" : "failed");
+    setTimeout(() => setState("idle"), ok ? 1500 : 2200);
   };
 
   const sizes = {
@@ -42,7 +39,8 @@ export default function CodeChip({ code, label, size = "md", copyable = true }) 
         onClick={handleCopy}
         whileTap={copyable ? { scale: 0.97 } : {}}
         className={`relative font-code font-semibold tracking-[0.08em] text-ink bg-surface
-          border-2 border-dashed border-accent/50 rounded-[--radius-control]
+          border-2 border-dashed rounded-[--radius-control]
+          ${state === "failed" ? "border-status-overdue/60" : "border-accent/50"}
           ${sizes[size]}
           ${copyable ? "cursor-pointer hover:border-accent hover:bg-accent-soft/40" : "cursor-default"}
           transition-colors flex items-center gap-3`}
@@ -55,11 +53,17 @@ export default function CodeChip({ code, label, size = "md", copyable = true }) 
         <span>{code}</span>
 
         {copyable && (
-          copied
-            ? <CheckIcon className="w-4 h-4 text-status-done shrink-0" />
-            : <ClipboardDocumentIcon className="w-4 h-4 text-muted shrink-0" />
+          state === "copied" ? <CheckIcon className="w-4 h-4 text-status-done shrink-0" />
+          : state === "failed" ? <XMarkIcon className="w-4 h-4 text-status-overdue shrink-0" />
+          : <ClipboardDocumentIcon className="w-4 h-4 text-muted shrink-0" />
         )}
       </motion.button>
+      {state === "failed" && (
+        <span className="text-xs text-status-overdue">
+          Couldn't copy automatically — select and copy the code above.
+        </span>
+      )}
     </div>
   );
 }
+

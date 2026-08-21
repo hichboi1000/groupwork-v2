@@ -74,12 +74,14 @@ export const getClass = (id) => api.get(`/classes/${id}/`);
 export const updateClass = (id, data) => api.patch(`/classes/${id}/`, data);
 export const deleteClass = (id) => api.delete(`/classes/${id}/`);
 export const addRepToClass = (id, userId) => api.post(`/classes/${id}/add-rep/`, { user_id: userId });
+export const removeRepFromClass = (id, userId) => api.post(`/classes/${id}/remove-rep/`, { user_id: userId });
 
 export const createGroup = (data) => api.post('/groups/create/', data);
 export const joinGroup = (data) => api.post('/groups/join/', data);
 export const getMyGroup = () => api.get('/groups/mine/');
 export const getAllGroups = () => api.get('/groups/all/');
 export const leaveGroup = () => api.delete('/groups/leave/');
+export const transferLeadership = (newLeaderId) => api.post('/groups/transfer-leader/', { new_leader_id: newLeaderId });
 export const getGroupProgress = (groupId) => api.get('/groups/progress/', { params: groupId ? { group_id: groupId } : {} });
 export const getTasks = (params) => api.get('/tasks/', { params });
 export const getTask = (id) => api.get(`/tasks/${id}/`);

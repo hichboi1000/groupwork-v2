@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "../contexts/AuthContext";
-import { getMyGroup, createGroup, joinGroup, leaveGroup, getGroupProgress, downloadFile } from "../api/client";
+import { getMyGroup, createGroup, joinGroup, leaveGroup, transferLeadership, getGroupProgress, downloadFile } from "../api/client";
 
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
@@ -86,20 +86,6 @@ function MemberBreakdown({ member, index }) {
   );
 }
 
-function CopyButton({ text }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <Button variant="outline" size="sm" onClick={copy} icon={copied ? CheckIcon : ClipboardDocumentIcon}>
-      {copied ? "Copied" : "Copy Code"}
-    </Button>
-  );
-}
-
 export default function GroupPage() {
   const { user } = useAuth();
   const [group, setGroup] = useState(null);
@@ -165,6 +151,25 @@ export default function GroupPage() {
       setSuccess("You left the group.");
     } catch (err) {
       setError(err.response?.data?.error || "Could not leave group.");
+    }
+  };
+
+  // Leadership transfer — one call does the whole handoff (new leader
+  // promoted, you demoted back to a plain member) so there's no need to
+  // leave-and-recreate the group to change who leads it.
+  const [transferringId, setTransferringId] = useState(null);
+  const handleTransferLeadership = async (member) => {
+    if (!window.confirm(`Make ${member.full_name} the new group leader? You'll become a regular member.`)) return;
+    setError(""); setSuccess("");
+    setTransferringId(member.id);
+    try {
+      const r = await transferLeadership(member.id);
+      setGroup(r.data);
+      setSuccess(`${member.full_name} is now the group leader.`);
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not transfer leadership.");
+    } finally {
+      setTransferringId(null);
     }
   };
 
@@ -326,8 +331,16 @@ export default function GroupPage() {
                 <div className="font-medium text-ink truncate">{m.full_name}</div>
                 <div className="text-xs text-muted capitalize">{m.role}</div>
               </div>
-              {m.id === group.leader?.id && (
+              {m.id === group.leader?.id ? (
                 <Badge variant="accent" className="ml-auto shrink-0">Leader</Badge>
+              ) : user.role === "leader" && (
+                <Button
+                  variant="outline" size="sm" className="ml-auto shrink-0"
+                  loading={transferringId === m.id}
+                  onClick={() => handleTransferLeadership(m)}
+                >
+                  Make Leader
+                </Button>
               )}
             </motion.div>
           ))}
